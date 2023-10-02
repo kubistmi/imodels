@@ -30,6 +30,7 @@ class Node:
         left=None,
         impurity: float = None,
         impurity_reduction: float = None,
+        min_samples: int = None,
         tree_num: int = None,
         node_id: int = None,
         right=None,
@@ -44,6 +45,7 @@ class Node:
         self.feature = feature
         self.impurity = impurity
         self.impurity_reduction = impurity_reduction
+        self.min_samples = min_samples
         self.value_sklearn = value_sklearn
 
         # different meanings
@@ -102,6 +104,7 @@ class FIGS(BaseEstimator):
         max_rules: int = 12,
         max_trees: int = None,
         min_impurity_decrease: float = 0.0,
+        min_samples_leaf: int = 1,
         random_state=None,
         max_features: str = None,
     ):
@@ -114,6 +117,8 @@ class FIGS(BaseEstimator):
             Max total number of trees
         min_impurity_decrease: float
             A node will be split if this split induces a decrease of the impurity greater than or equal to this value.
+        min_samples_leaf: int
+            The minimum number of samples required to be at a leaf node. A split point at any depth will only be considered if it leaves at least min_samples_leaf training samples in each of the left and right branches.
         max_features
             The number of features to consider when looking for the best split (see https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.RandomForestClassifier.html)
         """
@@ -121,6 +126,7 @@ class FIGS(BaseEstimator):
         self.max_rules = max_rules
         self.max_trees = max_trees
         self.min_impurity_decrease = min_impurity_decrease
+        self.min_samples_leaf = min_samples_leaf
         self.random_state = random_state
         self.max_features = max_features
         self._init_decision_function()
@@ -160,7 +166,7 @@ class FIGS(BaseEstimator):
         RIGHT = 2
 
         # fit stump
-        stump = tree.DecisionTreeRegressor(max_depth=1, max_features=max_features)
+        stump = tree.DecisionTreeRegressor(max_depth=1, max_features=max_features, min_samples_leaf=self.min_samples_leaf)
         sweight = None
         if sample_weight is not None:
             sweight = sample_weight[idxs]
@@ -215,6 +221,7 @@ class FIGS(BaseEstimator):
             threshold=threshold[SPLIT],
             impurity=impurity[SPLIT],
             impurity_reduction=impurity_reduction,
+            min_samples=n_node_samples[SPLIT],
         )
         # print('\t>>>', node_split, 'impurity', impurity, 'num_pts', idxs.sum(), 'imp_reduc', impurity_reduction)
 
@@ -224,12 +231,14 @@ class FIGS(BaseEstimator):
             value=value[LEFT],
             impurity=impurity[LEFT],
             tree_num=tree_num,
+            min_samples=n_node_samples[LEFT]
         )
         node_right = Node(
             idxs=idxs_right,
             value=value[RIGHT],
             impurity=impurity[RIGHT],
             tree_num=tree_num,
+            min_samples=n_node_samples[RIGHT]
         )
         node_split.setattrs(
             left_temp=node_left,
@@ -299,6 +308,9 @@ class FIGS(BaseEstimator):
             if split_node.impurity_reduction < self.min_impurity_decrease:
                 finished = True
                 break
+            if split_node.min_samples < self.min_samples_leaf:
+                finished = True
+                break
             elif (
                 split_node.is_root
                 and self.max_trees is not None
@@ -325,7 +337,7 @@ class FIGS(BaseEstimator):
 
                 # add new root potential node
                 node_new_root = Node(
-                    is_root=True, idxs=np.ones(X.shape[0], dtype=bool), tree_num=-1
+                    is_root=True, idxs=np.ones(X.shape[0], dtype=bool), tree_num=-1, min_samples=X.shape[0],
                 )
                 potential_splits.append(node_new_root)
 
@@ -385,7 +397,7 @@ class FIGS(BaseEstimator):
                 )
 
                 # this is a valid split
-                if potential_split.impurity_reduction is not None:
+                if potential_split.impurity_reduction is not None and potential_split.min_samples >= self.min_samples_leaf:
                     potential_splits_new.append(potential_split)
 
             # sort so largest impurity reduction comes last (should probs make this a heap later)
